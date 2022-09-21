@@ -14,10 +14,16 @@ import (
 func producer(ctx context.Context, strings []string) (<-chan string, error) {
 	outChannel := make(chan string)
 
+	// wrapping in a goroutine prevents deadlock
 	go func() {
+		// good strat here is whoever opens the channel should be in charge of closing
+		// no risk of sending to a closed channel = panic!
 		defer close(outChannel)
 
 		for _, s := range strings {
+			// tries to receive value from ctx if not done then moves to next branch
+			// we use another case instead of 'default' statement because we'd be stuck blocking outChannel
+			// 2nd case statement allows us to switch between trying the 2 cases.
 			select {
 			case <-ctx.Done():
 				return
@@ -35,6 +41,8 @@ func sink(ctx context.Context, cancelFunc context.CancelFunc, values <-chan stri
 		case <-ctx.Done():
 			log.Print(ctx.Err().Error())
 			return
+
+		// if we receive an error then we stop the pipeline from running
 		case err := <-errors:
 			if err != nil {
 				log.Println("error: ", err.Error())
@@ -75,12 +83,14 @@ func step[In any, Out any](
 				break
 			case s, ok := <-inputChannel:
 				if ok {
+					// defer doing the work until we have available resources
 					if err := sem1.Acquire(ctx, 1); err != nil {
 						log.Printf("Failed to acquire semaphore: %v", err)
 						break
 					}
 
 					go func(s In) {
+						// finished processing value
 						defer sem1.Release(1)
 						time.Sleep(time.Second * 3)
 
